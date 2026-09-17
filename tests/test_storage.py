@@ -261,7 +261,7 @@ class MySqlRepositoryTests(RepositoryContract, unittest.TestCase):
         with admin.cursor() as cursor:
             cursor.execute(f"DROP DATABASE `{self.database}`")
 
-    def test_shared_permissions_tags_and_separate_profiles(self) -> None:
+    def test_shared_definitions_and_separate_players(self) -> None:
         first = StonePermsManager(self.repository)
         second = StonePermsManager(self.other)
         profile = PlayerProfile("player", "Player", "123", online=True, ping_ms=20)
@@ -271,19 +271,38 @@ class MySqlRepositoryTests(RepositoryContract, unittest.TestCase):
         test1 = ContextSet.parse("server=test1")
         test2 = ContextSet.parse("server=test2")
         self.assertIsNone(second.check_permission(subject, "fly.use", test2).value)
-        first.set_permission(subject, "fly.use", True, actor="test")
-        first.set_permission(subject, "kill.use", True, actor="test", contexts=test1)
+
         first.create_group("vip", actor="test")
-        first.add_parent(subject, "vip", actor="test")
-        first.set_prefix(SubjectRef.group("vip"), "§6[VIP]", 10, actor="test")
+        first.set_permission(SubjectRef.group("vip"), "kit.use", True, actor="test")
+        first.set_prefix(SubjectRef.group("vip"), "\u00a76[VIP]", 10, actor="test")
         first.create_track("staff", actor="test")
         first.append_track_group("staff", "vip", actor="test")
+        first.set_permission(subject, "fly.use", True, actor="test")
+        first.add_parent(subject, "vip", actor="test")
         self.assertTrue(self.other.refresh())
-        self.assertTrue(second.check_permission(subject, "fly.use", test2).value)
-        self.assertIsNone(second.check_permission(subject, "kill.use", test2).value)
-        self.assertEqual(second.resolve_prefix(subject, test2).value, "§6[VIP]")
+
+        # the group, what hangs off it and the track belong to the network
+        self.assertEqual(
+            tuple(group.name for group in second.list_groups()), ("default", "vip")
+        )
         self.assertEqual(second.get_track("staff").groups, ("vip",))
+        # what a player was given belongs to the server that gave it
+        self.assertTrue(first.check_permission(subject, "fly.use", test1).value)
+        self.assertTrue(first.check_permission(subject, "kit.use", test1).value)
+        self.assertEqual(first.resolve_prefix(subject, test1).value, "\u00a76[VIP]")
+        self.assertIsNone(second.check_permission(subject, "fly.use", test2).value)
+        self.assertIsNone(second.check_permission(subject, "kit.use", test2).value)
+        self.assertIsNone(second.resolve_prefix(subject, test2).value)
         self.assertFalse(self.other.refresh())
+
+        # the same network group, given here, applies here
+        second.add_parent(subject, "vip", actor="test")
+        self.assertEqual(second.resolve_prefix(subject, test2).value, "\u00a76[VIP]")
+        self.assertTrue(second.check_permission(subject, "kit.use", test2).value)
+        self.assertIsNone(second.check_permission(subject, "fly.use", test2).value)
+        self.assertTrue(self.repository.refresh())
+        self.assertTrue(first.check_permission(subject, "fly.use", test1).value)
+
         first.observe_player(replace(profile, online=False))
         self.assertTrue(second.get_player_profile("player").online)
         self.assertEqual(second.get_player_profile("player").ping_ms, 80)
@@ -291,6 +310,38 @@ class MySqlRepositoryTests(RepositoryContract, unittest.TestCase):
         self.repository.initialize("default")
         self.assertTrue(second.get_player_profile("player").online)
         self.assertFalse(first.get_player_profile("player").online)
+
+    def test_upgrade_keeps_earlier_nodes_readable_everywhere(self) -> None:
+        import pymysql
+
+        from endstone_stoneperms.infrastructure.mysql_repository import MySqlPermissionRepository
+
+        self.repository.create_group(GroupRecord("vip", "VIP"), "test")
+        self.repository.save_node(
+            Node(SubjectRef.user("player"), NodeType.PARENT, "vip", "true"),
+            "test",
+            "user.parent.add",
+        )
+        # put the store back the way it looked before players belonged to a server
+        connection = pymysql.connect(
+            host=self.settings.host, port=self.settings.port, user=self.settings.username,
+            password=self.settings.password, database=self.database, autocommit=True,
+        )
+        with closing(connection), connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE nodes DROP INDEX nodes_server_lookup")
+            cursor.execute("ALTER TABLE nodes DROP COLUMN server")
+            cursor.execute("UPDATE schema_migrations SET version = 1 WHERE version = 2")
+
+        upgraded = MySqlPermissionRepository(self.settings, "test1")
+        self.addCleanup(upgraded.close)
+        upgraded.initialize("default")
+        nodes = upgraded.nodes_for(SubjectRef.user("player"))
+        self.assertEqual(len(nodes), 1)
+        # a node from before names no server, so every server still reads it
+        other = MySqlPermissionRepository(self.settings, "test3")
+        self.addCleanup(other.close)
+        other.initialize("default")
+        self.assertEqual(len(other.nodes_for(SubjectRef.user("player"))), 1)
 
     def test_stale_editor_is_rejected_without_polling(self) -> None:
         revision = self.other.revision

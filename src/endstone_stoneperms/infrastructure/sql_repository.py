@@ -39,6 +39,7 @@ last_quit_at, skin_updated_at, online
 class SqlPermissionRepository:
     _users_table = "users"
     _insert_ignore = "INSERT OR IGNORE"
+    _node_scope = ""
 
     def __init__(self) -> None:
         self._connection: SqlConnection | None = None
@@ -48,6 +49,25 @@ class SqlPermissionRepository:
     @property
     def revision(self) -> int:
         return self._revision
+
+    def _node_filter(self) -> str:
+        """Group nodes carry no server and are read by everyone; a player's are read
+        only by the server that gave them. A file is one server's and needs none."""
+        return " AND server IN ('', ?)" if self._node_scope else ""
+
+    def _node_scope_params(self) -> tuple[object, ...]:
+        return (self._node_scope,) if self._node_scope else ()
+
+    def _node_owner_column(self) -> str:
+        return ", server" if self._node_scope else ""
+
+    def _node_owner_placeholder(self) -> str:
+        return ", ?" if self._node_scope else ""
+
+    def _node_owner_params(self, subject: SubjectRef) -> tuple[object, ...]:
+        if not self._node_scope:
+            return ()
+        return (self._node_scope if subject.type is SubjectType.USER else "",)
 
     def refresh(self) -> bool:
         return False
@@ -481,11 +501,11 @@ class SqlPermissionRepository:
             replacement_query, replacement_params = self._replacement_query(node, contexts_json)
             connection.execute(replacement_query, replacement_params)
             cursor = connection.execute(
-                """
+                f"""
                 INSERT INTO nodes(
                     subject_type, subject_id, node_type, node_key, node_value,
-                    contexts_json, expires_at, priority, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    contexts_json, expires_at, priority, created_at{self._node_owner_column()}
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?{self._node_owner_placeholder()})
                 """,
                 (
                     node.subject.type.value,
@@ -497,6 +517,7 @@ class SqlPermissionRepository:
                     node.expires_at,
                     node.priority,
                     timestamp,
+                    *self._node_owner_params(node.subject),
                 ),
             )
             saved = Node(
@@ -536,7 +557,7 @@ class SqlPermissionRepository:
         connection = self._require_connection()
         query = (
             "DELETE FROM nodes WHERE subject_type = ? AND subject_id = ? "
-            "AND node_type = ? AND node_key = ? AND contexts_json = ?"
+            "AND node_type = ? AND node_key = ? AND contexts_json = ?" + self._node_filter()
         )
         params: list[object] = [
             subject.type.value,
@@ -544,6 +565,7 @@ class SqlPermissionRepository:
             node_type.value,
             str(key),
             contexts.to_json(),
+            *self._node_scope_params(),
         ]
         if temporary is True:
             query += " AND expires_at IS NOT NULL"
@@ -603,8 +625,9 @@ class SqlPermissionRepository:
                     raise ValueError("The old parent node must be persisted")
                 cursor = connection.execute(
                     "DELETE FROM nodes WHERE id = ? AND subject_type = ? AND subject_id = ? "
-                    "AND node_type = 'parent'",
-                    (old_node.id, subject.type.value, subject.identifier),
+                    "AND node_type = 'parent'" + self._node_filter(),
+                    (old_node.id, subject.type.value, subject.identifier,
+                     *self._node_scope_params()),
                 )
                 if cursor.rowcount != 1:
                     raise RuntimeError("The parent assignment changed concurrently")
@@ -615,11 +638,11 @@ class SqlPermissionRepository:
                 )
                 connection.execute(replacement_query, replacement_params)
                 cursor = connection.execute(
-                    """
+                    f"""
                     INSERT INTO nodes(
                         subject_type, subject_id, node_type, node_key, node_value,
-                        contexts_json, expires_at, priority, created_at
-                    ) VALUES (?, ?, 'parent', ?, 'true', ?, ?, 0, ?)
+                        contexts_json, expires_at, priority, created_at{self._node_owner_column()}
+                    ) VALUES (?, ?, 'parent', ?, 'true', ?, ?, 0, ?{self._node_owner_placeholder()})
                     """,
                     (
                         subject.type.value,
@@ -628,6 +651,7 @@ class SqlPermissionRepository:
                         contexts_json,
                         new_node.expires_at,
                         timestamp,
+                        *self._node_owner_params(subject),
                     ),
                 )
                 saved = Node(
@@ -787,8 +811,8 @@ class SqlPermissionRepository:
             )
         return added_total, removed_total, changed_total
 
-    @staticmethod
     def _remove_editor_nodes(
+        self,
         connection: SqlConnection,
         subject: SubjectRef,
         nodes: tuple[Node, ...],
@@ -797,8 +821,9 @@ class SqlPermissionRepository:
             if node.id is None:
                 raise RuntimeError("An editor session referenced an unpersisted node")
             cursor = connection.execute(
-                "DELETE FROM nodes WHERE id = ? AND subject_type = ? AND subject_id = ?",
-                (node.id, subject.type.value, subject.identifier),
+                "DELETE FROM nodes WHERE id = ? AND subject_type = ? AND subject_id = ?"
+                + self._node_filter(),
+                (node.id, subject.type.value, subject.identifier, *self._node_scope_params()),
             )
             if cursor.rowcount != 1:
                 raise RevisionConflictError(
@@ -840,8 +865,8 @@ class SqlPermissionRepository:
 
     def nodes_for(self, subject: SubjectRef, *, include_expired: bool = True) -> tuple[Node, ...]:
         connection = self._require_connection()
-        query = "SELECT * FROM nodes WHERE subject_type = ? AND subject_id = ?"
-        params: list[object] = [subject.type.value, subject.identifier]
+        query = "SELECT * FROM nodes WHERE subject_type = ? AND subject_id = ?" + self._node_filter()
+        params: list[object] = [subject.type.value, subject.identifier, *self._node_scope_params()]
         if not include_expired:
             query += " AND (expires_at IS NULL OR expires_at > ?)"
             params.append(int(time.time()))
@@ -859,12 +884,13 @@ class SqlPermissionRepository:
                 "SELECT name, display_name, weight FROM permission_groups"
             ).fetchall()
             node_rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM nodes
-                WHERE subject_type = 'group' OR (subject_type = 'user' AND subject_id = ?)
+                WHERE (subject_type = 'group' OR (subject_type = 'user' AND subject_id = ?))
+                {self._node_filter()}
                 ORDER BY id
                 """,
-                (user.identifier,),
+                (user.identifier, *self._node_scope_params()),
             ).fetchall()
         groups = {row["name"]: self._row_to_group(row) for row in group_rows}
         nodes: dict[SubjectRef, list[Node]] = {}
@@ -882,15 +908,16 @@ class SqlPermissionRepository:
         connection = self._require_connection()
         with self._lock, connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT DISTINCT subject_type, subject_id
-                FROM nodes WHERE expires_at IS NOT NULL AND expires_at <= ?
+                FROM nodes WHERE expires_at IS NOT NULL AND expires_at <= ?{self._node_filter()}
                 """,
-                (int(timestamp),),
+                (int(timestamp), *self._node_scope_params()),
             ).fetchall()
             cursor = connection.execute(
-                "DELETE FROM nodes WHERE expires_at IS NOT NULL AND expires_at <= ?",
-                (int(timestamp),),
+                "DELETE FROM nodes WHERE expires_at IS NOT NULL AND expires_at <= ?"
+                + self._node_filter(),
+                (int(timestamp), *self._node_scope_params()),
             )
             count = cursor.rowcount
             subjects = frozenset(
@@ -941,7 +968,7 @@ class SqlPermissionRepository:
     def _replacement_query(self, node: Node, contexts_json: str) -> tuple[str, list[object]]:
         query = (
             "DELETE FROM nodes WHERE subject_type = ? AND subject_id = ? AND node_type = ? "
-            "AND node_key = ? AND contexts_json = ?"
+            "AND node_key = ? AND contexts_json = ?" + self._node_filter()
         )
         params: list[object] = [
             node.subject.type.value,
@@ -949,6 +976,7 @@ class SqlPermissionRepository:
             node.type.value,
             node.key,
             contexts_json,
+            *self._node_scope_params(),
         ]
         query += " AND expires_at IS NOT NULL" if node.temporary else " AND expires_at IS NULL"
         if node.type in {NodeType.PREFIX, NodeType.SUFFIX}:
@@ -956,18 +984,18 @@ class SqlPermissionRepository:
             params.append(node.priority)
         return query, params
 
-    @staticmethod
     def _insert_editor_node(
+        self,
         connection: SqlConnection,
         node: Node,
         timestamp: int,
     ) -> None:
         connection.execute(
-            """
+            f"""
             INSERT INTO nodes(
                 subject_type, subject_id, node_type, node_key, node_value,
-                contexts_json, expires_at, priority, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                contexts_json, expires_at, priority, created_at{self._node_owner_column()}
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?{self._node_owner_placeholder()})
             """,
             (
                 node.subject.type.value,
@@ -979,6 +1007,7 @@ class SqlPermissionRepository:
                 node.expires_at,
                 node.priority,
                 int(timestamp),
+                *self._node_owner_params(node.subject),
             ),
         )
 

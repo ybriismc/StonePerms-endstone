@@ -33,8 +33,8 @@ it never opens the plugin database itself.
 
 - **Permission data** — users, groups, recursive inheritance, positive and negative nodes,
   temporary assignments, weighted conflict resolution, and persistent audit history.
-- **Storage** — SQLite by default, or optional MySQL with shared permissions, groups, tracks,
-  metadata, prefixes, and suffixes across servers and a separate user table for each server.
+- **Storage** — SQLite by default, or optional MySQL where groups, tracks, and everything
+  hanging off a group are shared across servers while each server keeps its own players.
 - **Contexts** — built-in `server`, `world`, `dimension`, and `gamemode` values plus context
   providers registered by other Endstone plugins.
 - **Display data** — inherited metadata, multiple weighted prefixes and suffixes, PAPI placeholders,
@@ -329,13 +329,20 @@ server = "test1"
 
 On the second server use `storage.server_id = "test2"` and `contexts.server = "test2"`.
 `storage.server_id` must be unique and stable for each server. It selects a dedicated
-`users_<hash>` table; `storage_servers` records the mapping. Player names, profiles, skins,
-online status, and gameplay observations stay local to that server. Shared user permission
-nodes use the player's UUID, so all servers must use consistent player identities.
-`contexts.server` determines which server-scoped nodes apply and can be changed independently.
+`users_<hash>` table; `storage_servers` records the mapping.
 
-Groups, tracks, permission nodes, metadata, prefixes, suffixes, and the audit log are shared.
-Nodes without contexts apply everywhere. Use the existing context syntax to restrict any node:
+What a server keeps to itself is its players: names, profiles, skins, online status, and every
+node given to a player. Somebody who is VIP on the lobby arrives at a minigame as whatever that
+server gives them, normally the default group. Player identities are matched by UUID, so all
+servers must agree on those.
+
+Groups, tracks, and the nodes, metadata, prefixes and suffixes on a group are shared, as is the
+audit log. A group made anywhere exists everywhere the moment it is made, and a permission added
+to it applies wherever that group is used. Deleting a group deletes it for the network and takes
+the assignments it left with it on every server.
+
+A node with no context applies on every server that reads it. Use the context syntax to restrict
+one further:
 
 ```text
 /stoneperms user Steve permission set fly.use true
@@ -352,6 +359,9 @@ only on `test1`. The moderator prefix is stored once and inherited wherever that
 Database revisions propagate changes to online players, including their name tags, every
 `storage.sync_ticks` (20 ticks by default). Webeditor batches check the shared revision inside
 their transaction and reject stale edits. Failed synchronization is retried on the next poll.
+Nodes stored before a server kept its own players carry no owner and stay readable by every
+server, so an existing database keeps behaving as it did until those assignments are made again.
+
 Storage connection settings and `storage.server_id` require a restart. Set `ssl_ca` to a trusted
 CA certificate file to enable TLS with certificate and hostname verification, using the
 [PyMySQL connection options](https://pymysql.readthedocs.io/en/latest/modules/connections.html).

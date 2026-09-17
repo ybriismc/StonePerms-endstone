@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = (
     """
@@ -40,7 +40,9 @@ SCHEMA = (
         expires_at BIGINT,
         priority BIGINT NOT NULL DEFAULT 0,
         created_at BIGINT NOT NULL,
+        server VARCHAR(128) NOT NULL DEFAULT '',
         INDEX nodes_subject_lookup (subject_type, subject_id),
+        INDEX nodes_server_lookup (server, subject_type, subject_id),
         INDEX nodes_expiry_lookup (expires_at),
         INDEX nodes_permission_lookup (node_type, node_key(128)),
         CHECK (subject_type IN ('user', 'group')),
@@ -79,6 +81,16 @@ SCHEMA = (
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
     """,
 )
+
+# A group belongs to the network and carries no server. A node attached to a
+# player belongs to the server that gave it, so the same person can be VIP on
+# one server and default on another out of one database.
+MIGRATIONS = {
+    2: (
+        "ALTER TABLE nodes ADD COLUMN server VARCHAR(128) NOT NULL DEFAULT ''",
+        "ALTER TABLE nodes ADD INDEX nodes_server_lookup (server, subject_type, subject_id)",
+    ),
+}
 
 USER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS {users_table} (

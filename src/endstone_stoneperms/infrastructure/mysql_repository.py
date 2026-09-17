@@ -8,7 +8,7 @@ from ..domain.model import PermissionSnapshot, SubjectRef
 from ..domain.validation import normalize_context_value, normalize_group_name
 from ..settings import MySqlSettings
 from .mysql_connection import MySqlConnection
-from .mysql_schema import SCHEMA, SCHEMA_VERSION, USER_SCHEMA
+from .mysql_schema import MIGRATIONS, SCHEMA, SCHEMA_VERSION, USER_SCHEMA
 from .sql_connection import SqlConnection
 from .sql_repository import SqlPermissionRepository
 
@@ -22,6 +22,7 @@ class MySqlPermissionRepository(SqlPermissionRepository):
         self._server_id = normalize_context_value(server_id)
         digest = hashlib.sha256(self._server_id.encode("utf-8")).hexdigest()[:24]
         self._users_table = f"users_{digest}"
+        self._node_scope = self._server_id
         self._last_refreshed_revision = 0
 
     def initialize(self, default_group: str) -> None:
@@ -45,6 +46,12 @@ class MySqlPermissionRepository(SqlPermissionRepository):
                 )
             for statement in SCHEMA[1:]:
                 connection.execute(statement)
+            # A database from before a version already has its tables, so what it
+            # is missing is applied on top instead of created.
+            if current >= 1:
+                for version in range(current + 1, SCHEMA_VERSION + 1):
+                    for statement in MIGRATIONS.get(version, ()):
+                        connection.execute(statement)
             connection.execute(USER_SCHEMA.format(users_table=self._users_table))
             connection.execute("INSERT IGNORE INTO storage_state(id, revision) VALUES (1, 0)")
             with connection:
