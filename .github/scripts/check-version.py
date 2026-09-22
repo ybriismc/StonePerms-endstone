@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
@@ -9,11 +8,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SEMVER_PATTERN = re.compile(r"\d+\.\d+\.\d+")
-
-
-def read_json(relative_path: str) -> dict[str, object]:
-    with (ROOT / relative_path).open(encoding="utf-8") as handle:
-        return json.load(handle)
 
 
 def require_string(value: object, source: str) -> str:
@@ -31,20 +25,6 @@ def collect_versions() -> dict[str, str]:
     if plugin_match is None:
         raise ValueError("src/endstone_stoneperms/version.py must contain only VERSION = \"<version>\"")
 
-    api_package = read_json("api/package.json")
-    api_lock = read_json("api/package-lock.json")
-    dashboard_package = read_json("dashboard/package.json")
-    dashboard_lock = read_json("dashboard/package-lock.json")
-
-    api_lock_packages = api_lock.get("packages")
-    dashboard_lock_packages = dashboard_lock.get("packages")
-    if not isinstance(api_lock_packages, dict) or not isinstance(api_lock_packages.get(""), dict):
-        raise ValueError("api/package-lock.json is missing the root package metadata")
-    if not isinstance(dashboard_lock_packages, dict) or not isinstance(
-        dashboard_lock_packages.get(""), dict
-    ):
-        raise ValueError("dashboard/package-lock.json is missing the root package metadata")
-
     project_metadata = project.get("project")
     if not isinstance(project_metadata, dict):
         raise ValueError("pyproject.toml is missing [project] metadata")
@@ -52,21 +32,6 @@ def collect_versions() -> dict[str, str]:
     return {
         "pyproject.toml": require_string(project_metadata.get("version"), "pyproject.toml"),
         "src/endstone_stoneperms/version.py": plugin_match.group(1),
-        "api/package.json": require_string(api_package.get("version"), "api/package.json"),
-        "api/package-lock.json": require_string(api_lock.get("version"), "api/package-lock.json"),
-        "api/package-lock.json packages root": require_string(
-            api_lock_packages[""].get("version"), "api/package-lock.json packages root"
-        ),
-        "dashboard/package.json": require_string(
-            dashboard_package.get("version"), "dashboard/package.json"
-        ),
-        "dashboard/package-lock.json": require_string(
-            dashboard_lock.get("version"), "dashboard/package-lock.json"
-        ),
-        "dashboard/package-lock.json packages root": require_string(
-            dashboard_lock_packages[""].get("version"),
-            "dashboard/package-lock.json packages root",
-        ),
     }
 
 
@@ -100,16 +65,9 @@ def main() -> int:
             raise ValueError(f"StonePerms versions are not synchronized:\n{details}")
 
         write_github_outputs(canonical_version)
-        print(f"StonePerms version {canonical_version} is synchronized across all package metadata.")
+        print(f"StonePerms version {canonical_version} is synchronized.")
         return 0
-    except (
-        KeyError,
-        OSError,
-        TypeError,
-        ValueError,
-        json.JSONDecodeError,
-        tomllib.TOMLDecodeError,
-    ) as error:
+    except (KeyError, OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
         print(f"Version check failed: {error}", file=sys.stderr)
         return 1
 

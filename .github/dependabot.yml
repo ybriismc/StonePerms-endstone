@@ -11,34 +11,6 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: npm
-    directory: /api
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
-    groups:
-      production-dependencies:
-        dependency-type: production
-      development-dependencies:
-        dependency-type: development
-
-  - package-ecosystem: npm
-    directory: /dashboard
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
-    groups:
-      production-dependencies:
-        dependency-type: production
-      development-dependencies:
-        dependency-type: development
-
-  - package-ecosystem: docker
-    directory: /api
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-
   - package-ecosystem: github-actions
     directory: /
     schedule:

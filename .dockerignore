@@ -1,9 +1,0 @@
-.git
-.venv
-**/node_modules
-**/dist
-**/.env
-**/data
-**/*.db*
-.test-tmp*
-.ruff_cache

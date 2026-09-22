@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="dashboard/public/stoneperms-logo.png" alt="StonePerms logo" width="168">
+  <img src="assets/stoneperms-logo.png" alt="StonePerms logo" width="168">
 </p>
 
 <h1 align="center">StonePerms</h1>
@@ -20,8 +20,8 @@
   <a href="#first-setup">Setup</a> ·
   <a href="#commands">Commands</a> ·
   <a href="https://stoneperms.spindexgfx.com">Public dashboard</a> ·
-  <a href="api/README.md">Self-hosting</a> ·
-  <a href="dashboard/README.md">Dashboard</a>
+  <a href="https://github.com/ybriismc/EasyGroupsAPI">Self-hosting</a> ·
+  <a href="https://github.com/ybriismc/EasyGroupsWeb">Dashboard</a>
 </p>
 
 StonePerms stores and resolves permissions for [Endstone](https://endstone.dev/). It applies the
@@ -72,8 +72,9 @@ Copy the built wheel from `dist/` into the Endstone server's `plugins/` director
 database is created as `plugins/stoneperms/stoneperms.db` when the plugin is first enabled.
 If wheels are copied directly instead of installing the package with `pip`, ensure
 `websocket-client>=1.8,<2` is installed in Endstone's Python environment before enabling `[web]`.
-See the [self-hosting guide](api/README.md) and [dashboard development guide](dashboard/README.md)
-for the optional web stack.
+The optional web stack lives in its own repositories:
+[EasyGroupsAPI](https://github.com/ybriismc/EasyGroupsAPI) for self-hosting the API and
+[EasyGroupsWeb](https://github.com/ybriismc/EasyGroupsWeb) for the dashboard.
 
 The public dashboard is available at `https://stoneperms.spindexgfx.com`. Create a pairing code
 there and run `/stoneperms web pair <code> [server-name]`. Self-hosted installations keep using
@@ -386,11 +387,18 @@ player and omits undefined permissions so Endstone's registered default remains 
 
 ## Project layout
 
-| Path         | Purpose                                             |
-| ------------ | --------------------------------------------------- |
-| `src/`       | Python package and Endstone plugin                  |
-| `api/`       | TypeScript API, live plugin bridge, and Docker deployment |
-| `dashboard/` | Vue dashboard and permission editor                 |
+| Path      | Purpose                             |
+| --------- | ----------------------------------- |
+| `src/`    | Python package and Endstone plugin  |
+| `tests/`  | Storage and cleanup tests           |
+
+This repository holds the Endstone plugin alone. The web stack it talks to is developed separately:
+
+| Repository | Purpose |
+| ---------- | ------- |
+| [EasyGroupsAPI](https://github.com/ybriismc/EasyGroupsAPI) | TypeScript API, live plugin bridge, and Docker deployment |
+| [EasyGroupsWeb](https://github.com/ybriismc/EasyGroupsWeb) | Vue dashboard and permission editor |
+| [EasyGroups](https://github.com/ybriismc/EasyGroups) | The PocketMine-MP port of this plugin |
 
 The plugin owns permission data and remains usable by itself. The API owns web accounts, sessions,
 memberships, and pairing credentials. Production dashboard files are served by the API from the
